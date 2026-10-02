@@ -10,42 +10,42 @@ import com.haptikit.app.data.PatternEntity
 /**
  * Thin wrapper so the rest of the app never touches the Android vibration
  * APIs directly. Handles the API-level split (VibratorManager on 31+,
- * plain Vibrator below, no amplitude control below 26).
+ * plain Vibrator below).
  */
 class VibrationEngine(context: Context) {
 
     private val vibrator: Vibrator =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-            vm.defaultVibrator
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else {
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
 
-    fun play(pattern: PatternEntity) {
-        if (!vibrator.hasVibrator()) return
+    val hasVibrator: Boolean get() = vibrator.hasVibrator()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val effect = VibrationEffect.createWaveform(
-                pattern.timings.toLongArray(),
-                pattern.amplitudes.toIntArray(),
+    /** Without amplitude control, every non-zero segment buzzes at full strength. */
+    val hasAmplitudeControl: Boolean get() = vibrator.hasAmplitudeControl()
+
+    fun play(pattern: PatternEntity) = play(pattern.timings, pattern.amplitudes)
+
+    fun play(timings: List<Long>, amplitudes: List<Int>) {
+        if (!vibrator.hasVibrator() || timings.isEmpty() || timings.size != amplitudes.size) return
+        if (amplitudes.all { it == 0 }) return
+        vibrator.cancel()
+        vibrator.vibrate(
+            VibrationEffect.createWaveform(
+                timings.map { it.coerceAtLeast(1) }.toLongArray(),
+                amplitudes.map { it.coerceIn(0, 255) }.toIntArray(),
                 -1 // no repeat
             )
-            vibrator.vibrate(effect)
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(pattern.timings.toLongArray(), -1)
-        }
+        )
     }
 
-    fun playSingleTap(amplitude: Int = 200, durationMs: Long = 40) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createOneShot(durationMs, amplitude.coerceIn(1, 255)))
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(durationMs)
-        }
+    /** Starts a buzz that lasts until [cancel] — used while recording a held beat. */
+    fun startHold(amplitude: Int) {
+        if (!vibrator.hasVibrator()) return
+        vibrator.vibrate(VibrationEffect.createOneShot(10_000, amplitude.coerceIn(1, 255)))
     }
 
     fun cancel() = vibrator.cancel()
